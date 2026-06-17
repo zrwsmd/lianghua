@@ -18,11 +18,24 @@ interface StrategyParamsPanelProps {
   isLoading: boolean
 }
 
+// 获取今天日期（YYYY-MM-DD格式）
+const getToday = () => {
+  const today = new Date()
+  return today.toISOString().split('T')[0]
+}
+
+// 获取一个月前的日期（YYYY-MM-DD格式）
+const getOneMonthAgo = () => {
+  const today = new Date()
+  const oneMonthAgo = new Date(today.setMonth(today.getMonth() - 1))
+  return oneMonthAgo.toISOString().split('T')[0]
+}
+
 export default function StrategyParamsPanel({ onRunBacktest, isLoading }: StrategyParamsPanelProps) {
   const [symbol, setSymbol] = useState('BTCUSDT')
   const [timeframe, setTimeframe] = useState('5m')
-  const [startDate, setStartDate] = useState('2024-01-01')
-  const [endDate, setEndDate] = useState('2024-12-31')
+  const [startDate, setStartDate] = useState(getOneMonthAgo())
+  const [endDate, setEndDate] = useState(getToday())
   const [fastPeriod, setFastPeriod] = useState(20)
   const [slowPeriod, setSlowPeriod] = useState(50)
   const [atrPeriod, setAtrPeriod] = useState(14)
