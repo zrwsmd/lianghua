@@ -120,6 +120,8 @@ export interface BacktestResult {
     price: number
     quantity: number
     pnl?: number
+    reason?: string
+    stop_price?: number
   }>
   stats: {
     total_return: number
@@ -129,6 +131,10 @@ export interface BacktestResult {
     win_rate: number
     total_trades: number
     final_equity: number
+  }
+  indicators?: {
+    ema_fast: Array<{ time: number; value: number }>
+    ema_slow: Array<{ time: number; value: number }>
   }
 }
 

@@ -141,10 +141,7 @@ export default function HomePage() {
             {/* K线图 */}
             <PriceChart
               data={ohlcvData}
-              indicators={backtestResult ? {
-                ema_fast: backtestResult.equity_curve.map(item => ({ time: item.time, value: 0 })), // 实际应该从后端获取
-                ema_slow: backtestResult.equity_curve.map(item => ({ time: item.time, value: 0 }))
-              } : undefined}
+              indicators={backtestResult?.indicators}
             />
 
             {/* 权益曲线 */}

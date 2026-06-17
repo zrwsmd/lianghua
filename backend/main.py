@@ -132,7 +132,8 @@ def run_backtest(request: BacktestRequest):
             "equity_curve": result["equity_curve"],
             "drawdown_curve": result["drawdown_curve"],
             "trades": result["trades"],
-            "stats": result["stats"]
+            "stats": result["stats"],
+            "indicators": result["indicators"]
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -447,11 +448,28 @@ def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100
         "final_equity": round(final_equity, 2)
     }
 
+    # 构建均线指标，供前端在K线图上叠加真实EMA曲线。
+    # generate_signals已在df上算好ema_fast/ema_slow（EWM不产生NaN），这里直接复用。
+    ema_fast_curve = []
+    ema_slow_curve = []
+    for _, row in df.iterrows():
+        t = int(row["timestamp"] / 1000)
+        if not pd.isna(row.get("ema_fast")):
+            ema_fast_curve.append({"time": t, "value": float(row["ema_fast"])})
+        if not pd.isna(row.get("ema_slow")):
+            ema_slow_curve.append({"time": t, "value": float(row["ema_slow"])})
+
+    indicators = {
+        "ema_fast": ema_fast_curve,
+        "ema_slow": ema_slow_curve
+    }
+
     return {
         "equity_curve": equity_curve,
         "drawdown_curve": drawdown_curve,
         "trades": trades,
-        "stats": stats
+        "stats": stats,
+        "indicators": indicators
     }
 
 
