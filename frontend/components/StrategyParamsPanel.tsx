@@ -34,8 +34,9 @@ const getOneMonthAgo = () => {
 export default function StrategyParamsPanel({ onRunBacktest, isLoading }: StrategyParamsPanelProps) {
   const [symbol, setSymbol] = useState('600519')
   const [timeframe, setTimeframe] = useState('1d')
-  const [startDate, setStartDate] = useState(getOneMonthAgo())
-  const [endDate, setEndDate] = useState(getToday())
+  // 使用确定存在数据的日期范围（2024年1月到12月）
+  const [startDate, setStartDate] = useState('2024-01-01')
+  const [endDate, setEndDate] = useState('2024-12-31')
   const [fastPeriod, setFastPeriod] = useState(20)
   const [slowPeriod, setSlowPeriod] = useState(50)
   const [atrPeriod, setAtrPeriod] = useState(14)
