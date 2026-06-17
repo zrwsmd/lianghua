@@ -123,7 +123,9 @@ def run_backtest(request: BacktestRequest):
             raise HTTPException(status_code=400, detail="不支持的策略类型")
 
         # 运行回测引擎
-        result = run_backtest_engine(df, strategy, initial_capital=100000.0)
+        result = run_backtest_engine(
+            df, strategy, initial_capital=100000.0, timeframe=request.timeframe
+        )
 
         return {
             "success": True,
@@ -256,7 +258,8 @@ def reset_account():
 
 # ============== 回测引擎核心逻辑 ==============
 
-def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100000.0):
+def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100000.0,
+                        timeframe: str = "1d"):
     """
     简单回测引擎实现
     """
@@ -266,19 +269,22 @@ def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100
     # 初始化回测状态
     capital = initial_capital
     position = 0  # 持仓数量
+    entry_price = 0.0  # 当前持仓的开仓价
     equity_curve = []
     trades = []
+    pending_signal = 0  # 上一根K线收盘确认、待在本根开盘价执行的信号
 
     # 遍历每根K线
+    # 关键：信号在某根K线收盘后才能确认，成交则发生在“下一根K线的开盘价”，
+    # 这样可避免前视偏差（look-ahead bias），更贴近实盘可执行的结果。
     for i in range(len(df)):
         row = df.iloc[i]
-        signal = signals.iloc[i]
 
-        # 执行交易
-        if signal == 1 and position == 0:
-            # 买入开仓
-            position = capital * 0.95 / row["close"]  # 使用95%资金，留5%作为手续费缓冲
-            entry_price = row["close"]
+        # 第一步：按“上一根产生的信号”，在本根K线开盘价成交
+        if pending_signal == 1 and position == 0:
+            # 买入开仓（用本根开盘价）
+            entry_price = row["open"]
+            position = capital * 0.95 / entry_price  # 使用95%资金，留5%作为手续费缓冲
             trades.append({
                 "timestamp": int(row["timestamp"]),
                 "type": "buy",
@@ -286,9 +292,9 @@ def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100
                 "quantity": float(position)
             })
 
-        elif signal == -1 and position > 0:
-            # 卖出平仓
-            exit_price = row["close"]
+        elif pending_signal == -1 and position > 0:
+            # 卖出平仓（用本根开盘价）
+            exit_price = row["open"]
             pnl = (exit_price - entry_price) * position
             capital = capital + pnl - (entry_price * position * 0.001 + exit_price * position * 0.001)  # 扣除手续费
             trades.append({
@@ -300,7 +306,10 @@ def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100
             })
             position = 0
 
-        # 计算当前净值
+        # 第二步：本根K线收盘后才确认信号，留到下一根开盘执行
+        pending_signal = signals.iloc[i]
+
+        # 第三步：按本根收盘价计算当前账户净值
         if position > 0:
             equity = capital - entry_price * position + row["close"] * position
         else:
@@ -336,8 +345,21 @@ def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100
     annual_return = float(annual_return * 100)
 
     # 计算夏普比率（简化版）
+    # 年化因子需随周期变化：日线一年约252个交易日，分钟线则一年有数万根K线，
+    # 写死252会让分钟线的夏普严重失真，这里按周期动态计算每年的K线根数。
+    bars_per_year_map = {
+        "1m": 252 * 240,   # 每个交易日约240分钟（A股4小时）
+        "5m": 252 * 48,
+        "15m": 252 * 16,
+        "30m": 252 * 8,
+        "1h": 252 * 4,
+        "4h": 252 * 1,
+        "1d": 252,
+    }
+    bars_per_year = bars_per_year_map.get(timeframe, 252)
+
     returns = equity_series.pct_change().dropna()
-    sharpe_ratio = float(returns.mean() / returns.std() * np.sqrt(252)) if returns.std() > 0 else 0
+    sharpe_ratio = float(returns.mean() / returns.std() * np.sqrt(bars_per_year)) if returns.std() > 0 else 0
 
     # 计算胜率
     winning_trades = [t for t in trades if "pnl" in t and t["pnl"] > 0]
