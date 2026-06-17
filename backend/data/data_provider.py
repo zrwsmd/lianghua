@@ -1,11 +1,13 @@
 """
 数据提供器 - 支持真实数据和模拟数据
 支持A股、黄金、期货等多种资产类型
+多数据源支持：akshare、baostock
 """
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import akshare as ak
+import baostock as bs
 
 
 class DataProvider:
@@ -78,10 +80,32 @@ class DataProvider:
 
     def _get_stock_data(self, symbol: str, start: str, end: str) -> pd.DataFrame:
         """
-        获取A股数据（使用akshare）
+        获取A股数据（多数据源支持）
+        优先使用akshare，失败时自动切换到baostock
         """
         print(f"正在获取A股数据: {symbol}, {start} to {end}")
 
+        # 尝试akshare数据源
+        try:
+            df = self._get_stock_data_akshare(symbol, start, end)
+            print(f"akshare数据源成功，获取到 {len(df)} 条数据")
+            return df
+        except Exception as e:
+            print(f"akshare数据源失败: {e}")
+
+        # 尝试baostock数据源
+        try:
+            df = self._get_stock_data_baostock(symbol, start, end)
+            print(f"baostock数据源成功，获取到 {len(df)} 条数据")
+            return df
+        except Exception as e:
+            print(f"baostock数据源失败: {e}")
+            raise Exception("所有数据源均失败")
+
+    def _get_stock_data_akshare(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        """
+        使用akshare获取A股数据
+        """
         # 转换日期格式：YYYY-MM-DD -> YYYYMMDD
         start_date = start.replace("-", "")
         end_date = end.replace("-", "")
@@ -94,9 +118,6 @@ class DataProvider:
             end_date=end_date,
             adjust="qfq"  # 前复权
         )
-
-        print(f"获取到 {len(df)} 条数据")
-        print(f"列名: {df.columns.tolist()}")
 
         # 转换为时间戳（毫秒）- 修复类型转换问题
         df["timestamp"] = pd.to_datetime(df.iloc[:, 0]).astype('int64') // 10**6
@@ -113,6 +134,64 @@ class DataProvider:
         result_df = df[["timestamp", "open", "high", "low", "close", "volume"]].copy()
 
         print(f"处理后数据样例: open={result_df.iloc[0]['open']}, close={result_df.iloc[0]['close']}")
+
+        return result_df
+
+    def _get_stock_data_baostock(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        """
+        使用baostock获取A股数据（备用数据源）
+        """
+        # 登录baostock
+        lg = bs.login()
+        if lg.error_code != '0':
+            raise Exception(f"baostock登录失败: {lg.error_msg}")
+
+        # 转换股票代码格式：600000 -> sh.600000, 000001 -> sz.000001
+        if symbol.startswith('6'):
+            bs_code = f"sh.{symbol}"
+        elif symbol.startswith('0') or symbol.startswith('3'):
+            bs_code = f"sz.{symbol}"
+        else:
+            raise Exception(f"不支持的股票代码: {symbol}")
+
+        # 获取历史数据
+        rs = bs.query_history_k_data_plus(
+            bs_code,
+            "date,open,high,low,close,volume",
+            start_date=start,
+            end_date=end,
+            frequency="d",
+            adjustflag="2"  # 2表示前复权
+        )
+
+        if rs.error_code != '0':
+            bs.logout()
+            raise Exception(f"baostock查询失败: {rs.error_msg}")
+
+        # 转换为DataFrame
+        data_list = []
+        while (rs.error_code == '0') & rs.next():
+            data_list.append(rs.get_row_data())
+
+        bs.logout()
+
+        if not data_list:
+            raise Exception("baostock返回数据为空")
+
+        df = pd.DataFrame(data_list, columns=rs.fields)
+
+        # 数据转换
+        df["timestamp"] = pd.to_datetime(df["date"]).astype('int64') // 10**6
+        df["open"] = df["open"].astype(float)
+        df["high"] = df["high"].astype(float)
+        df["low"] = df["low"].astype(float)
+        df["close"] = df["close"].astype(float)
+        df["volume"] = df["volume"].astype(float)
+
+        # 选择需要的列
+        result_df = df[["timestamp", "open", "high", "low", "close", "volume"]].copy()
+
+        print(f"baostock数据样例: open={result_df.iloc[0]['open']}, close={result_df.iloc[0]['close']}")
 
         return result_df
 
