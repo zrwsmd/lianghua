@@ -32,8 +32,8 @@ const getOneMonthAgo = () => {
 }
 
 export default function StrategyParamsPanel({ onRunBacktest, isLoading }: StrategyParamsPanelProps) {
-  const [symbol, setSymbol] = useState('BTCUSDT')
-  const [timeframe, setTimeframe] = useState('5m')
+  const [symbol, setSymbol] = useState('600519')
+  const [timeframe, setTimeframe] = useState('1d')
   const [startDate, setStartDate] = useState(getOneMonthAgo())
   const [endDate, setEndDate] = useState(getToday())
   const [fastPeriod, setFastPeriod] = useState(20)
