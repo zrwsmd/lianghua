@@ -8,7 +8,70 @@
 2. Node.js 16 或更高版本
 3. Windows系统（已提供bat脚本）
 
-### 第一步：初始化后端（约2分钟）
+### 方案A：手动命令行执行（推荐，适用于py命令环境）
+
+如果你的Python是通过Windows Python Launcher安装的（只能用py命令，python命令不可用），请使用以下步骤：
+
+#### 第一步：初始化后端
+
+```bash
+# 进入后端目录
+cd backend
+
+# 创建虚拟环境（不占用C盘，所有依赖安装在项目目录）
+py -m venv venv
+
+# 安装依赖包
+venv\Scripts\pip.exe install -r requirements.txt
+```
+
+#### 第二步：启动后端服务
+
+```bash
+# 确保在backend目录下
+# 启动FastAPI服务
+venv\Scripts\python.exe main.py
+```
+
+看到以下信息表示启动成功：
+```
+INFO:     Uvicorn running on http://0.0.0.0:8000
+```
+
+保持这个窗口运行，不要关闭。
+
+#### 第三步：安装前端依赖
+
+打开新的命令行窗口：
+
+```bash
+# 进入前端目录
+cd frontend
+
+# 安装依赖
+npm install
+```
+
+#### 第四步：启动前端服务
+
+```bash
+# 确保在frontend目录下
+# 启动Next.js开发服务器
+npm run dev
+```
+
+看到以下信息表示启动成功：
+```
+ready - started server on 0.0.0.0:3000, url: http://localhost:3000
+```
+
+---
+
+### 方案B：使用批处理脚本（需要python命令在PATH中）
+
+注意：此方案需要python命令已添加到系统PATH环境变量。如果运行setup.bat时提示"python不是内部或外部命令"，请使用方案A。
+
+#### 第一步：初始化后端（约2分钟）
 
 ```bash
 # 进入后端目录
@@ -22,7 +85,7 @@ setup.bat
 - 在项目目录下创建Python虚拟环境（不占用C盘）
 - 安装所有Python依赖包
 
-### 第二步：启动后端服务
+#### 第二步：启动后端服务
 
 ```bash
 # 在backend目录下，双击运行 start.bat 或执行：
@@ -34,7 +97,7 @@ start.bat
 INFO:     Uvicorn running on http://0.0.0.0:8000
 ```
 
-### 第三步：安装前端依赖（约1分钟）
+#### 第三步：安装前端依赖（约1分钟）
 
 打开新的命令行窗口：
 
@@ -46,7 +109,7 @@ cd frontend
 npm install
 ```
 
-### 第四步：启动前端服务
+#### 第四步：启动前端服务
 
 ```bash
 # 在frontend目录下，双击运行 start.bat 或执行：
