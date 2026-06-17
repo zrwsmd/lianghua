@@ -271,15 +271,18 @@ def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100
     position_side = 0           # 持仓方向：1=多头，-1=空头，0=空仓
     position = 0.0             # 持仓数量（恒为正，方向由position_side表示）
     entry_price = 0.0          # 当前持仓的开仓价
+    stop_price = 0.0           # 当前持仓的ATR止损价（0表示未设止损）
     equity_curve = []
     trades = []
     pending_signal = 0         # 上一根K线收盘确认、待在本根开盘价执行的信号
 
     fee_rate = 0.001           # 单边手续费率0.1%
+    risk_per_trade = 0.01      # 单笔最大亏损占总资金比例（1%风控）
+    atr_multiplier = getattr(strategy, "atr_multiplier", 2.0)  # ATR止损倍数
 
-    def close_position(exit_price, ts):
+    def close_position(exit_price, ts, reason="signal"):
         """按给定价格平掉当前持仓，结算盈亏到现金，返回平仓交易记录。"""
-        nonlocal capital, position, position_side, entry_price
+        nonlocal capital, position, position_side, entry_price, stop_price
         if position_side == 1:
             pnl = (exit_price - entry_price) * position   # 多头盈亏
             trade_type = "sell"
@@ -294,24 +297,47 @@ def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100
             "type": trade_type,
             "price": float(exit_price),
             "quantity": float(position),
-            "pnl": float(net_pnl)
+            "pnl": float(net_pnl),
+            "reason": reason   # signal=信号平仓，stop=触发ATR止损
         }
         position = 0.0
         position_side = 0
         entry_price = 0.0
+        stop_price = 0.0
         return record
 
-    def open_position(side, open_price, ts):
-        """按给定方向和价格开仓，返回开仓交易记录。"""
-        nonlocal capital, position, position_side, entry_price
+    def open_position(side, open_price, ts, atr):
+        """按给定方向和价格开仓。
+
+        仓位由“单笔1%风险”反推：每股风险 = ATR × 倍数（即开仓价到止损价的距离），
+        仓位 = 总资金×1% / 每股风险，再受“不加杠杆”的名义市值上限约束。
+        ATR无效（预热期）时退回95%资金法且不挂止损。
+        """
+        nonlocal capital, position, position_side, entry_price, stop_price
         entry_price = open_price
-        position = capital * 0.95 / entry_price   # 用95%资金，留5%缓冲手续费
         position_side = side
+
+        stop_distance = atr * atr_multiplier if atr and atr > 0 else 0.0
+        max_qty = capital * 0.95 / entry_price   # 不加杠杆的最大可买数量
+
+        if stop_distance > 0:
+            risk_amount = capital * risk_per_trade
+            qty_by_risk = risk_amount / stop_distance
+            position = min(qty_by_risk, max_qty)
+            if side == 1:
+                stop_price = entry_price - stop_distance
+            else:
+                stop_price = entry_price + stop_distance
+        else:
+            position = max_qty
+            stop_price = 0.0
+
         return {
             "timestamp": int(ts),
             "type": "buy" if side == 1 else "short",
             "price": float(entry_price),
-            "quantity": float(position)
+            "quantity": float(position),
+            "stop_price": float(stop_price)
         }
 
     # 遍历每根K线
@@ -321,6 +347,7 @@ def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100
         row = df.iloc[i]
         price_open = row["open"]
         ts = row["timestamp"]
+        atr = row["atr"] if "atr" in df.columns and not pd.isna(row["atr"]) else 0.0
 
         # 第一步：按“上一根产生的信号”，在本根K线开盘价成交
         if pending_signal == 1:
@@ -328,16 +355,27 @@ def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100
             if position_side == -1:
                 trades.append(close_position(price_open, ts))
             if position_side == 0:
-                trades.append(open_position(1, price_open, ts))
+                trades.append(open_position(1, price_open, ts, atr))
 
         elif pending_signal == -1:
             # 死叉：若持有多头先平多，再开空（“平多并做空”）
             if position_side == 1:
                 trades.append(close_position(price_open, ts))
             if position_side == 0:
-                trades.append(open_position(-1, price_open, ts))
+                trades.append(open_position(-1, price_open, ts, atr))
 
-        # 第二步：本根K线收盘后才确认信号，留到下一根开盘执行
+        # 第二步：盘中检查ATR止损（在开仓之后、本根收盘前）。
+        # 多头：本根最低价跌破止损价即触发；空头：本根最高价升破止损价即触发。
+        # 成交价取止损价本身（贴近止损单实盘行为）；跳空时按更不利的开盘价成交。
+        if position_side != 0 and stop_price > 0:
+            if position_side == 1 and row["low"] <= stop_price:
+                fill = min(stop_price, price_open) if price_open < stop_price else stop_price
+                trades.append(close_position(fill, ts, reason="stop"))
+            elif position_side == -1 and row["high"] >= stop_price:
+                fill = max(stop_price, price_open) if price_open > stop_price else stop_price
+                trades.append(close_position(fill, ts, reason="stop"))
+
+        # 第三步：本根K线收盘后才确认信号，留到下一根开盘执行
         pending_signal = signals.iloc[i]
 
         # 第三步：按本根收盘价计算当前账户净值
