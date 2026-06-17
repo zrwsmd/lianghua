@@ -267,51 +267,84 @@ def run_backtest_engine(df: pd.DataFrame, strategy, initial_capital: float = 100
     signals = strategy.generate_signals(df)
 
     # 初始化回测状态
-    capital = initial_capital
-    position = 0  # 持仓数量
-    entry_price = 0.0  # 当前持仓的开仓价
+    capital = initial_capital   # 现金（含已实现盈亏）
+    position_side = 0           # 持仓方向：1=多头，-1=空头，0=空仓
+    position = 0.0             # 持仓数量（恒为正，方向由position_side表示）
+    entry_price = 0.0          # 当前持仓的开仓价
     equity_curve = []
     trades = []
-    pending_signal = 0  # 上一根K线收盘确认、待在本根开盘价执行的信号
+    pending_signal = 0         # 上一根K线收盘确认、待在本根开盘价执行的信号
+
+    fee_rate = 0.001           # 单边手续费率0.1%
+
+    def close_position(exit_price, ts):
+        """按给定价格平掉当前持仓，结算盈亏到现金，返回平仓交易记录。"""
+        nonlocal capital, position, position_side, entry_price
+        if position_side == 1:
+            pnl = (exit_price - entry_price) * position   # 多头盈亏
+            trade_type = "sell"
+        else:
+            pnl = (entry_price - exit_price) * position   # 空头盈亏
+            trade_type = "cover"
+        fee = (entry_price + exit_price) * position * fee_rate  # 两腿手续费
+        net_pnl = pnl - fee
+        capital += net_pnl
+        record = {
+            "timestamp": int(ts),
+            "type": trade_type,
+            "price": float(exit_price),
+            "quantity": float(position),
+            "pnl": float(net_pnl)
+        }
+        position = 0.0
+        position_side = 0
+        entry_price = 0.0
+        return record
+
+    def open_position(side, open_price, ts):
+        """按给定方向和价格开仓，返回开仓交易记录。"""
+        nonlocal capital, position, position_side, entry_price
+        entry_price = open_price
+        position = capital * 0.95 / entry_price   # 用95%资金，留5%缓冲手续费
+        position_side = side
+        return {
+            "timestamp": int(ts),
+            "type": "buy" if side == 1 else "short",
+            "price": float(entry_price),
+            "quantity": float(position)
+        }
 
     # 遍历每根K线
     # 关键：信号在某根K线收盘后才能确认，成交则发生在“下一根K线的开盘价”，
     # 这样可避免前视偏差（look-ahead bias），更贴近实盘可执行的结果。
     for i in range(len(df)):
         row = df.iloc[i]
+        price_open = row["open"]
+        ts = row["timestamp"]
 
         # 第一步：按“上一根产生的信号”，在本根K线开盘价成交
-        if pending_signal == 1 and position == 0:
-            # 买入开仓（用本根开盘价）
-            entry_price = row["open"]
-            position = capital * 0.95 / entry_price  # 使用95%资金，留5%作为手续费缓冲
-            trades.append({
-                "timestamp": int(row["timestamp"]),
-                "type": "buy",
-                "price": float(entry_price),
-                "quantity": float(position)
-            })
+        if pending_signal == 1:
+            # 金叉：若持有空头先平空，再开多
+            if position_side == -1:
+                trades.append(close_position(price_open, ts))
+            if position_side == 0:
+                trades.append(open_position(1, price_open, ts))
 
-        elif pending_signal == -1 and position > 0:
-            # 卖出平仓（用本根开盘价）
-            exit_price = row["open"]
-            pnl = (exit_price - entry_price) * position
-            capital = capital + pnl - (entry_price * position * 0.001 + exit_price * position * 0.001)  # 扣除手续费
-            trades.append({
-                "timestamp": int(row["timestamp"]),
-                "type": "sell",
-                "price": float(exit_price),
-                "quantity": float(position),
-                "pnl": float(pnl)
-            })
-            position = 0
+        elif pending_signal == -1:
+            # 死叉：若持有多头先平多，再开空（“平多并做空”）
+            if position_side == 1:
+                trades.append(close_position(price_open, ts))
+            if position_side == 0:
+                trades.append(open_position(-1, price_open, ts))
 
         # 第二步：本根K线收盘后才确认信号，留到下一根开盘执行
         pending_signal = signals.iloc[i]
 
         # 第三步：按本根收盘价计算当前账户净值
-        if position > 0:
-            equity = capital - entry_price * position + row["close"] * position
+        if position_side == 1:
+            equity = capital + position * (row["close"] - entry_price)
+        elif position_side == -1:
+            equity = capital + position * (entry_price - row["close"])
         else:
             equity = capital
 
